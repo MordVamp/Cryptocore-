@@ -1,0 +1,27 @@
+[package]
+name = "cryptocore"
+version = "0.1.0"
+edition = "2024"
+description = "A command-line tool for cryptographic operations using block ciphers"
+readme = "README.md"
+
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+aes = "0.8.0"
+cipher = "0.4.0"
+hex = "0.4.0"
+anyhow = "1.0.0"
+thiserror = "1.0.0"
+block-padding = "0.3.0"
+ecb = "0.1.0"  
+
+
+[dev-dependencies]
+assert_cmd = "2.0.0"
+predicates = "2.0.0"
+tempfile = "0.3.0"
+
+[[bin]]
+name = "cryptocore"
+path = "src/main.rs"
