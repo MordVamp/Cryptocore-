@@ -1,2 +1,6 @@
 /target
 /Cargo.lock
+/ciphertext.bin
+/decrypted.txt
+/plaintext.enc
+/plaintext.txt
