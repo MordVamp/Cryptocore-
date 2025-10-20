@@ -1,92 +1,50 @@
-use aes::Aes128;
-use cipher::{BlockEncrypt, BlockDecrypt, KeyInit};
-use cipher::generic_array::{GenericArray, typenum::U16};
-use crate::error::{CryptoCoreError, Result};
+pub mod aes;
+pub mod modes;
+pub mod traits;
+use crate::core::crypto::traits::Cipher;
+use crate::error::Result;
+use modes::BlockMode;
 
-pub struct AesCipher {
-    cipher: Aes128,
+// Переименовали enum чтобы избежать конфликта имен
+pub enum CipherInstance {
+    AesEcb(aes::AesCipher),
+    BlockMode(BlockMode),
 }
 
-impl AesCipher {
-    pub fn new(key: &[u8]) -> Result<Self> {
-        if key.len() != 16 {
-            return Err(CryptoCoreError::InvalidKey(
-                "AES-128 requires exactly 16 bytes key".to_string(),
-            ));
+impl CipherInstance {
+    pub fn new(algorithm: &str, mode: &str, key: &[u8], iv: Option<&[u8]>) -> Result<Self> {
+        match (algorithm.to_lowercase().as_str(), mode.to_lowercase().as_str()) {
+            ("aes", "ecb") => Ok(Self::AesEcb(aes::AesCipher::new(key)?)),
+            ("aes", mode_name) if ["cbc", "cfb", "ofb", "ctr"].contains(&mode_name) => {
+                let iv = iv.ok_or_else(|| {
+                    crate::error::CryptoCoreError::InvalidArgument(
+                        "IV is required for this mode".to_string()
+                    )
+                })?;
+                Ok(Self::BlockMode(BlockMode::new(mode_name, key, iv)?))
+            }
+            _ => Err(crate::error::CryptoCoreError::InvalidArgument(
+                format!("Unsupported algorithm or mode: {} {}", algorithm, mode)
+            )),
         }
-
-        let key_array = GenericArray::from_slice(key);
-        let cipher = Aes128::new(key_array);
-        Ok(AesCipher { cipher })
     }
 
+    // Реализуем методы encrypt и decrypt для enum CipherInstance
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let block_size = 16;
-        let padded_data = self.pad_data(data, block_size)?;
-        let mut result = Vec::with_capacity(padded_data.len());
-        
-        for chunk in padded_data.chunks(block_size) {
-            let mut block = GenericArray::clone_from_slice(chunk);
-            self.cipher.encrypt_block(&mut block);
-            result.extend_from_slice(&block);
+        match self {
+            Self::AesEcb(cipher) => cipher.encrypt(data),
+            Self::BlockMode(mode) => mode.encrypt(data),
         }
-        
-        Ok(result)
     }
 
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if data.len() % 16 != 0 {
-            return Err(CryptoCoreError::Crypto(
-                "Ciphertext length must be a multiple of 16 bytes".to_string(),
-            ));
+        match self {
+            Self::AesEcb(cipher) => cipher.decrypt(data),
+            Self::BlockMode(mode) => mode.decrypt(data),
         }
-
-        let mut result = Vec::with_capacity(data.len());
-        
-        for chunk in data.chunks(16) {
-            let mut block = GenericArray::clone_from_slice(chunk);
-            self.cipher.decrypt_block(&mut block);
-            result.extend_from_slice(&block);
-        }
-        
-        self.unpad_data(&result)
-    }
-
-    fn pad_data(&self, data: &[u8], block_size: usize) -> Result<Vec<u8>> {
-        let mut padded = data.to_vec();
-        let pad_len = block_size - (data.len() % block_size);
-        padded.extend(std::iter::repeat(pad_len as u8).take(pad_len));
-        Ok(padded)
-    }
-
-    fn unpad_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if data.is_empty() {
-            return Ok(Vec::new());
-        }
-        
-        let pad_byte = data[data.len() - 1];
-        let pad_len = pad_byte as usize;
-        
-        if pad_len == 0 || pad_len > 16 || data.len() < pad_len {
-            return Err(CryptoCoreError::PaddingError("Invalid padding".to_string()));
-        }
-        
-        // Verify padding bytes
-        for i in (data.len() - pad_len)..data.len() {
-            if data[i] != pad_byte {
-                return Err(CryptoCoreError::PaddingError("Invalid padding bytes".to_string()));
-            }
-        }
-        
-        Ok(data[..data.len() - pad_len].to_vec())
     }
 }
 
-pub fn create_cipher(algorithm: &str, key: &[u8]) -> Result<AesCipher> {
-    match algorithm.to_lowercase().as_str() {
-        "aes" => AesCipher::new(key),
-        _ => Err(CryptoCoreError::InvalidArgument(
-            format!("Unsupported algorithm: {}", algorithm),
-        )),
-    }
+pub fn create_cipher(algorithm: &str, mode: &str, key: &[u8], iv: Option<&[u8]>) -> Result<CipherInstance> {
+    CipherInstance::new(algorithm, mode, key, iv)
 }

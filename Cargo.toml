@@ -12,9 +12,9 @@ aes = "0.8.0"
 cipher = "0.4.0"
 hex = "0.4.0"
 anyhow = "1.0.0"
-thiserror = "1.0.0"
+thiserror = "2.0.17"
 block-padding = "0.3.0"
-
+getrandom = { version = "0.3.4", features = ["std"] }
 
 [dev-dependencies]
 assert_cmd = "2.0.0"

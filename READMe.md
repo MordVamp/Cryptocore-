@@ -5,7 +5,7 @@ A command-line tool for cryptographic operations using block ciphers in ECB mode
 ## Features
 
 - AES-128 encryption and decryption
-- ECB mode operation
+- Modes: ECB, CBC, CFB, OFB, CTR
 - PKCS#7 padding
 - Hexadecimal key input
 - File-based I/O

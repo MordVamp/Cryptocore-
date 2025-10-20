@@ -19,6 +19,12 @@ pub enum CryptoCoreError {
     
     #[error("Padding error: {0}")]
     PaddingError(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    
+    #[error("Hex decoding error: {0}")]
+    HexError(#[from] hex::FromHexError),
 }
 
 pub type Result<T> = std::result::Result<T, CryptoCoreError>;
