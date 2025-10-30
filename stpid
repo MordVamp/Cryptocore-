@@ -1,0 +1,355 @@
+# CryptoCore
+
+A command-line tool for cryptographic operations using block ciphers in multiple modes of operation.
+
+## 🚀 Features
+
+### Core Cryptography
+- **AES-128** encryption and decryption
+- **Multiple Modes**: ECB, CBC, CFB, OFB, CTR
+- **Secure Implementation**: 
+  - Cryptographically secure random IV generation
+  - PKCS#7 padding for block cipher modes
+  - Proper initialization vector handling
+
+### File Operations
+- File-based I/O with automatic path derivation
+- IV management (prepended to encrypted files)
+- Support for large files with streaming processing
+
+### Security
+- Hexadecimal key input format
+- Secure memory handling
+- Validation for key and IV sizes
+- Proper error handling and reporting
+
+## 📋 Supported Modes
+
+| Mode | Type | Padding | IV Required | Security Notes |
+|------|------|---------|-------------|----------------|
+| **ECB** | Block | PKCS#7 | ❌ No | Basic mode, not recommended for sensitive data |
+| **CBC** | Block | PKCS#7 | ✅ Yes | Confidential, sequential processing |
+| **CFB** | Stream | ❌ No | ✅ Yes | Stream cipher, self-synchronizing |
+| **OFB** | Stream | ❌ No | ✅ Yes | Stream cipher, keystream independent |
+| **CTR** | Stream | ❌ No | ✅ Yes | Stream cipher, parallelizable |
+
+## 🛠️ Installation
+
+### Prerequisites
+
+- **Rust 1.70 or higher**
+- **Cargo** (Rust's package manager)
+- **OpenSSL** (for interoperability testing)
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd cryptocore
+
+# Build in release mode
+cargo build --release
+
+# The binary will be available at:
+# ./target/release/cryptocore
+```
+
+### Installation via Cargo
+
+```bash
+# Install directly from cargo (if published)
+cargo install cryptocore
+```
+
+## 📖 Usage
+
+### Basic Command Structure
+
+```bash
+cryptocore --algorithm <ALGORITHM> --mode <MODE> --encrypt|--decrypt --key <KEY> [--iv <IV>] --input <INPUT_FILE> [--output <OUTPUT_FILE>]
+```
+
+### Arguments
+
+| Argument | Required | Description | Format | Example |
+|----------|----------|-------------|---------|----------|
+| `--algorithm` | ✅ Yes | Cryptographic algorithm | `aes` | `--algorithm aes` |
+| `--mode` | ✅ Yes | Mode of operation | `ecb`, `cbc`, `cfb`, `ofb`, `ctr` | `--mode cbc` |
+| `--encrypt/--decrypt` | ✅ Yes | Operation type | One of these flags | `--encrypt` |
+| `--key` | ✅ Yes | Encryption key | 32 hex chars (16 bytes) | `--key 00112233445566778899aabbccddeeff` |
+| `--iv` | ❌ Optional* | Initialization Vector | 32 hex chars (16 bytes) | `--iv aabbccddeeff00112233445566778899` |
+| `--input` | ✅ Yes | Input file path | Valid file path | `--input document.txt` |
+| `--output` | ❌ Optional | Output file path | Valid file path | `--output encrypted.bin` |
+
+*IV is required for decryption in CBC, CFB, OFB, and CTR modes unless reading from file header.
+
+## 🔐 Examples
+
+### ECB Mode (Electronic Codebook)
+```bash
+# Encryption
+./cryptocore --algorithm aes --mode ecb --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt \
+    --output ciphertext.bin
+
+# Decryption  
+./cryptocore --algorithm aes --mode ecb --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input ciphertext.bin \
+    --output decrypted.txt
+```
+
+### CBC Mode (Cipher Block Chaining)
+```bash
+# Encryption (IV automatically generated and saved in file)
+./cryptocore --algorithm aes --mode cbc --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt \
+    --output ciphertext.bin
+
+# Decryption with IV from file header
+./cryptocore --algorithm aes --mode cbc --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input ciphertext.bin \
+    --output decrypted.txt
+
+# Decryption with explicit IV
+./cryptocore --algorithm aes --mode cbc --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --iv aabbccddeeff00112233445566778899 \
+    --input ciphertext.bin \
+    --output decrypted.txt
+```
+
+### CFB Mode (Cipher Feedback)
+```bash
+# Encryption
+./cryptocore --algorithm aes --mode cfb --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt \
+    --output ciphertext.bin
+
+# Decryption
+./cryptocore --algorithm aes --mode cfb --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input ciphertext.bin \
+    --output decrypted.txt
+```
+
+### OFB Mode (Output Feedback)
+```bash
+# Encryption
+./cryptocore --algorithm aes --mode ofb --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt
+
+# Output: plaintext.txt.enc (automatic naming)
+```
+
+### CTR Mode (Counter)
+```bash
+# Encryption with custom output name
+./cryptocore --algorithm aes --mode ctr --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input data.bin \
+    --output encrypted_data.ctr
+
+# Decryption
+./cryptocore --algorithm aes --mode ctr --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input encrypted_data.ctr \
+    --output restored_data.bin
+```
+
+## 🔄 Interoperability with OpenSSL
+
+### CBC Mode Interoperability
+
+**Encryption with CryptoCore, Decryption with OpenSSL:**
+```bash
+# CryptoCore encryption
+./cryptocore --algorithm aes --mode cbc --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt \
+    --output crypto_encrypted.bin
+
+# OpenSSL decryption (extract IV from file)
+IV=$(head -c 16 crypto_encrypted.bin | xxd -p)
+tail -c +17 crypto_encrypted.bin > ciphertext_only.bin
+
+openssl enc -aes-128-cbc -d \
+    -K 00112233445566778899aabbccddeeff \
+    -iv $IV \
+    -in ciphertext_only.bin \
+    -out openssl_decrypted.txt
+```
+
+**Encryption with OpenSSL, Decryption with CryptoCore:**
+```bash
+# OpenSSL encryption
+openssl enc -aes-128-cbc \
+    -K 00112233445566778899aabbccddeeff \
+    -iv aabbccddeeff00112233445566778899 \
+    -in plaintext.txt \
+    -out openssl_encrypted.bin
+
+# CryptoCore decryption (prepend IV to file)
+echo -n "aabbccddeeff00112233445566778899" | xxd -r -p > combined.bin
+cat openssl_encrypted.bin >> combined.bin
+
+./cryptocore --algorithm aes --mode cbc --decrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input combined.bin \
+    --output crypto_decrypted.txt
+```
+
+### CTR Mode Interoperability
+
+```bash
+# CryptoCore encryption
+./cryptocore --algorithm aes --mode ctr --encrypt \
+    --key 00112233445566778899aabbccddeeff \
+    --input plaintext.txt \
+    --output crypto_ctr.bin
+
+# OpenSSL decryption
+IV=$(head -c 16 crypto_ctr.bin | xxd -p)
+tail -c +17 crypto_ctr.bin > ctr_ciphertext.bin
+
+openssl enc -aes-128-ctr -d \
+    -K 00112233445566778899aabbccddeeff \
+    -iv $IV \
+    -in ctr_ciphertext.bin \
+    -out openssl_ctr_decrypted.txt
+```
+
+## 📁 File Format
+
+### Encrypted Files (for modes requiring IV)
+
+```
++----------------+-----------------------------+
+|  16-byte IV    |        Ciphertext          |
++----------------+-----------------------------+
+```
+
+- **IV**: 16 bytes of initialization vector
+- **Ciphertext**: Encrypted data (padded for block modes)
+
+### Automatic File Naming
+
+When `--output` is not specified:
+
+- **Encryption**: `input.txt` → `input.enc`
+- **Decryption**: `file.enc` → `file.dec`
+
+## 🛡️ Security Considerations
+
+### Key Management
+- Always use cryptographically secure random keys
+- Store keys securely, never in version control
+- Consider using key derivation functions for password-based keys
+
+### Mode Selection
+- **Avoid ECB** for sensitive data - patterns are preserved
+- **Prefer authenticated modes** like GCM when possible (future enhancement)
+- **CBC** requires unpredictable IVs - this is handled automatically
+
+### IV Handling
+- IVs are automatically generated using a cryptographically secure RNG
+- Never reuse IVs with the same key
+- IVs are prepended to ciphertext files for convenience
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**"Invalid key: must be 16 bytes (32 hex characters)"**
+- Ensure key is exactly 32 hexadecimal characters
+- Remove any prefixes or suffixes
+
+**"File is too short to contain IV"**
+- Encrypted file may be corrupted or not generated by CryptoCore
+- Verify the file was encrypted using a mode that includes IV
+
+**"IV must be 16 bytes for [mode] mode"**
+- Provide a 32-character hexadecimal string for IV
+- Or omit `--iv` to read from file header
+
+**Operation fails with large files**
+- All modes support files of any size
+- Check available disk space and file permissions
+
+### Debug Mode
+
+For troubleshooting, build in debug mode with more verbose output:
+
+```bash
+cargo build
+./target/debug/cryptocore [arguments]
+```
+
+## 🏗️ Project Structure
+
+```
+cryptocore/
+├── src/
+│   ├── main.rs                 # Application entry point
+│   ├── lib.rs                  # Library exports
+│   ├── cli/
+│   │   └── config.rs           # CLI argument parsing
+│   ├── core/
+│   │   ├── crypto/
+│   │   │   ├── aes.rs          # AES-128 implementation
+│   │   │   ├── modes/          # Encryption modes
+│   │   │   │   ├── cbc.rs      # CBC mode
+│   │   │   │   ├── cfb.rs      # CFB mode  
+│   │   │   │   ├── ofb.rs      # OFB mode
+│   │   │   │   ├── ctr.rs      # CTR mode
+│   │   │   │   └── mod.rs      # Mode dispatcher
+│   │   │   ├── traits.rs       # Cipher trait
+│   │   │   └── mod.rs          # Cipher factory
+│   │   └── io.rs               # File I/O operations
+│   ├── error.rs                # Error types
+│   └── types/
+│       └── operation.rs        # Operation enum
+├── Cargo.toml                  # Project dependencies
+└── README.md                   # This file
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development
+
+```bash
+# Run tests
+cargo test
+
+# Check for warnings
+cargo clippy
+
+# Format code
+cargo fmt
+```
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- Rust Crypto team for the `aes` and `cipher` crates
+- OpenSSL for interoperability reference
+- NIST for cryptographic standards and test vectors
+
+---
+
+**Note**: This tool is for educational and development purposes. Always consult security professionals for production cryptographic implementations.
