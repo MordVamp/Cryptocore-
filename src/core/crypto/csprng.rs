@@ -1,8 +1,8 @@
 use crate::{core::crypto::Sha256, error::{CryptoCoreError, Result}};
 use std::f64::consts::PI;
 
-// Your existing keygen constants and structures
-const REFLECTIONS: usize = 1000000;
+// Reduced constants for better performance
+const REFLECTIONS: usize = 10000;  // Reduced from 1,000,000
 const AREA_SIZE: f64 = 1.0;
 const EPSILON: f64 = 1e-9;
 
@@ -28,19 +28,29 @@ pub struct Csprng;
 
 impl Csprng {
     pub fn generate_random_bytes(num_bytes: usize) -> Result<Vec<u8>> {
-        // Use system entropy to seed your billiard simulation
-        let entropy = Self::get_system_entropy(32)?; // 32 bytes of system entropy
+        if num_bytes == 0 {
+            return Ok(Vec::new());
+        }
         
-        // Run your NIST-validated billiard algorithm
-        let reflection_sequence = simulate_billiard(&entropy);
+        let mut result = Vec::with_capacity(num_bytes);
+        let mut bytes_generated = 0;
         
-        // Hash the result to get uniform output
-        let mut hasher = Sha256::new();
-        hasher.update(&reflection_sequence);
-        let hash_result = hasher.finalize();
+        while bytes_generated < num_bytes {
+            let entropy_seed = Self::get_system_entropy(32)?;
+            let reflection_sequence = simulate_billiard(&entropy_seed);
+            
+            // Hash the reflection sequence to get uniform random bytes
+            let mut hasher = Sha256::new();
+            hasher.update(&reflection_sequence);
+            let hash_result = hasher.finalize();
+            
+            // Add as many bytes as we need from this hash
+            let bytes_needed = std::cmp::min(hash_result.len(), num_bytes - bytes_generated);
+            result.extend_from_slice(&hash_result[..bytes_needed]);
+            bytes_generated += bytes_needed;
+        }
         
-        // Return requested number of bytes
-        Ok(hash_result[..num_bytes].to_vec())
+        Ok(result)
     }
     
     pub fn generate_random_hex_string(num_bytes: usize) -> Result<String> {
@@ -56,15 +66,21 @@ impl Csprng {
     }
 }
 
-/// Your existing billiard simulation, now seeded with system entropy
 fn simulate_billiard(entropy_seed: &[u8]) -> Vec<u8> {
     let (x, y, angle) = parse_hash(entropy_seed);
     let mut reflection_sequence = Vec::with_capacity(REFLECTIONS);
 
     let mut pos = Position { x, y };
-    let mut dir = Direction { dx: angle.cos(), dy: angle.sin() };
+    let mut dir = Direction { 
+        dx: angle.cos(), 
+        dy: angle.sin() 
+    };
 
-    // Your existing simulation logic...
+    // Normalize direction
+    let length = (dir.dx * dir.dx + dir.dy * dir.dy).sqrt().max(f64::EPSILON);
+    dir.dx /= length;
+    dir.dy /= length;
+
     for _ in 0..REFLECTIONS {
         let (side, new_pos) = calculate_reflection(pos, dir);
         reflection_sequence.push(side.to_byte());
@@ -75,7 +91,6 @@ fn simulate_billiard(entropy_seed: &[u8]) -> Vec<u8> {
     reflection_sequence
 }
 
-/// Parse system entropy instead of password hash
 fn parse_hash(entropy: &[u8]) -> (f64, f64, f64) {
     let x = to_normalized_f64(&entropy[0..8]);
     let y = to_normalized_f64(&entropy[8..16]);
@@ -83,10 +98,8 @@ fn parse_hash(entropy: &[u8]) -> (f64, f64, f64) {
     (x, y, angle)
 }
 
-// Keep all your existing helper functions:
-// to_normalized_f64, calculate_reflection, update_direction, etc.
 fn to_normalized_f64(bytes: &[u8]) -> f64 {
-    let arr = bytes.try_into().expect("Invalid slice length");
+    let arr: [u8; 8] = bytes.try_into().expect("Invalid slice length");
     u64::from_be_bytes(arr) as f64 / u64::MAX as f64
 }
 
@@ -97,7 +110,7 @@ fn calculate_reflection(pos: Position, dir: Direction) -> (ReflectionSide, Posit
     let mut t = f64::INFINITY;
     let mut candidate_side = ReflectionSide::Left;
 
-    // Расчет времени до столкновения с горизонтальными границами
+    // Calculate collision with horizontal boundaries
     if dx > EPSILON {
         let tx = (AREA_SIZE - x) / dx;
         if tx < t {
@@ -112,7 +125,7 @@ fn calculate_reflection(pos: Position, dir: Direction) -> (ReflectionSide, Posit
         }
     }
 
-    // Расчет времени до столкновения с вертикальными границами
+    // Calculate collision with vertical boundaries
     if dy > EPSILON {
         let ty = (AREA_SIZE - y) / dy;
         if ty < t {
@@ -127,11 +140,11 @@ fn calculate_reflection(pos: Position, dir: Direction) -> (ReflectionSide, Posit
         }
     }
 
-    // Вычисление новой позиции с защитой от ошибок округления
+    // Calculate new position
     let new_x = (x + dx * t).clamp(0.0, AREA_SIZE);
     let new_y = (y + dy * t).clamp(0.0, AREA_SIZE);
 
-    // Определение стороны с приоритетом угловых случаев
+    // Determine reflection side with corner case handling
     let side = if (new_x - AREA_SIZE).abs() <= f64::EPSILON * 4.0 {
         ReflectionSide::Right
     } else if new_x <= f64::EPSILON * 4.0 {
@@ -146,7 +159,7 @@ fn calculate_reflection(pos: Position, dir: Direction) -> (ReflectionSide, Posit
 
     (side, Position { x: new_x, y: new_y })
 }
-/// Обновляет направление после отражения
+
 fn update_direction(dir: Direction, side: ReflectionSide) -> Direction {
     let mut new_dir = match side {
         ReflectionSide::Left | ReflectionSide::Right => Direction {
@@ -159,8 +172,8 @@ fn update_direction(dir: Direction, side: ReflectionSide) -> Direction {
         },
     };
     
-    // Нормализация направления
-    let length = (new_dir.dx.hypot(new_dir.dy)).max(f64::EPSILON);
+    // Normalize direction
+    let length = (new_dir.dx * new_dir.dx + new_dir.dy * new_dir.dy).sqrt().max(f64::EPSILON);
     new_dir.dx /= length;
     new_dir.dy /= length;
     
