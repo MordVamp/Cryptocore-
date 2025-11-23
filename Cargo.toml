@@ -15,9 +15,8 @@ anyhow = "1.0.0"
 thiserror = "2.0.17"
 block-padding = "0.3.0"
 getrandom = { version = "0.3.4", features = ["std"] }
-assert_cmd = "2.0"
-predicates = "3.0"
-tempfile = "3.8"
+nistrs="0.1.2"
+
 [dev-dependencies]
 assert_cmd = "2.0.0"
 predicates = "2.0.0"

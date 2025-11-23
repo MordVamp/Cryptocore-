@@ -4,3 +4,8 @@
 /decrypted.txt
 /plaintext.enc
 /plaintext.txt
+/test_cbc_decrypted.txt
+/test_cbc_encrypted.bin
+/test_iv_decrypted.txt
+/test_iv_encrypted.bin
+/test_plain.enc

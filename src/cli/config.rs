@@ -7,7 +7,7 @@ pub struct CliConfig {
     pub algorithm: String,
     pub mode: String,
     pub operation: Operation,
-    pub key: Vec<u8>,
+    pub key: Option<Vec<u8>>,
     pub iv: Option<Vec<u8>>,
     pub input_file: PathBuf,
     pub output_file: Option<PathBuf>,
@@ -87,7 +87,12 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
         return Err("Either --encrypt or --decrypt must be specified".into());
     };
 
-    // Validate IV usage
+    // Validate key usage
+    let key = matches.get_one::<Vec<u8>>("key").cloned();
+    if key.is_none() && operation == Operation::Decrypt {
+        return Err("Key is required for decryption".into());
+    }
+
     let iv = matches.get_one::<Vec<u8>>("iv").cloned();
     if let Some(ref _iv_vec) = iv {
         if operation == Operation::Encrypt {
@@ -99,7 +104,7 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
         algorithm: matches.get_one::<String>("algorithm").unwrap().to_string(),
         mode: matches.get_one::<String>("mode").unwrap().to_string(),
         operation,
-        key: matches.get_one::<Vec<u8>>("key").unwrap().clone(),
+        key,
         iv,
         input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
         output_file: matches.get_one::<PathBuf>("output").cloned(),

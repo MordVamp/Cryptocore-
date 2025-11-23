@@ -35,11 +35,12 @@ pub fn derive_output_path(input_path: &Path, operation: &Operation) -> PathBuf {
 
 // IV handling functions
 pub fn generate_iv() -> [u8; 16] {
+    let iv_bytes = crate::core::crypto::csprng::Csprng::generate_random_bytes(16)
+        .expect("Failed to generate IV");
     let mut iv = [0u8; 16];
-    getrandom::fill(&mut iv).expect("Failed to generate random IV");
+    iv.copy_from_slice(&iv_bytes);
     iv
 }
-
 pub fn read_file_with_iv(path: &Path) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let data = read_file(path)?;
     
