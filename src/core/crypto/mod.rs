@@ -1,7 +1,7 @@
 pub mod aes;
 pub mod csprng;
-pub mod sha256;
-pub use sha256::Sha256;
+
+pub mod hash;
 pub mod modes;
 pub mod traits;
 use crate::core::crypto::traits::Cipher;

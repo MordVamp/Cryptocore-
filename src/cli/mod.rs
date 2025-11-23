@@ -1,2 +1,2 @@
 mod config;
-pub use config::{CliConfig, parse_args};
+pub use config::{CliConfig, OperationType, parse_args};

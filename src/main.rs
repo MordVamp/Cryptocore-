@@ -1,6 +1,6 @@
-use cryptocore::{cli, Operation, Result};
-use cryptocore::core::{io, crypto};
-use cryptocore::{CryptoCoreError};  // Added CryptoCoreError
+use cryptocore::{cli, Operation, Result, CryptoCoreError};
+use cryptocore::core::{io, crypto, crypto::hash};
+
 fn main() -> Result<()> {
     let config = match cli::parse_args() {
         Ok(config) => config,
@@ -19,13 +19,33 @@ fn main() -> Result<()> {
 }
 
 fn run(config: cli::CliConfig) -> Result<()> {
-    let mode_requires_iv = !matches!(config.mode.to_lowercase().as_str(), "ecb");
+    match config.operation_type {
+        cli::OperationType::EncryptDecrypt { algorithm, mode, operation, key, iv, input_file, output_file } => {
+            run_encryption(algorithm, mode, operation, key, iv, input_file, output_file)
+        }
+        cli::OperationType::Digest { algorithm, input_file, output_file } => {
+            run_digest(algorithm, input_file, output_file)
+        }
+    }
+}
+
+
+fn run_encryption(
+    algorithm: String,
+    mode: String,
+    operation: Operation,
+    key: Option<Vec<u8>>,
+    iv: Option<Vec<u8>>,
+    input_file: std::path::PathBuf,
+    output_file: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let mode_requires_iv = !matches!(mode.to_lowercase().as_str(), "ecb");
     
     // Fix: Proper key handling with pattern matching
-    let (key, generated_key_hex) = match &config.key {
+    let (key, generated_key_hex) = match &key {
         Some(provided_key) => (provided_key.clone(), None),
         None => {
-            if config.operation == Operation::Encrypt {
+            if operation == Operation::Encrypt {
                 // Generate key using your CSPRNG
                 let new_key = crypto::csprng::Csprng::generate_random_bytes(16)?;
                 let key_hex = hex::encode(&new_key);
@@ -41,51 +61,51 @@ fn run(config: cli::CliConfig) -> Result<()> {
 
     // Handle IV based on operation and mode
     let (input_data, iv) = if mode_requires_iv {
-        match config.operation {
+        match operation {
             Operation::Encrypt => {
                 // Generate random IV for encryption
                 let iv_bytes = io::generate_iv();
-                let input_data = io::read_file(&config.input_file)?;
+                let input_data = io::read_file(&input_file)?;
                 (input_data, Some(iv_bytes.to_vec()))
             }
             Operation::Decrypt => {
                 // Use provided IV or read from file
-                if let Some(provided_iv) = config.iv {
-                    let input_data = io::read_file(&config.input_file)?;
+                if let Some(provided_iv) = iv {
+                    let input_data = io::read_file(&input_file)?;
                     (input_data, Some(provided_iv))
                 } else {
                     // Read IV from beginning of file
-                    let (input_data, file_iv) = io::read_file_with_iv(&config.input_file)?;
+                    let (input_data, file_iv) = io::read_file_with_iv(&input_file)?;
                     (input_data, file_iv)
                 }
             }
         }
     } else {
         // ECB mode doesn't use IV
-        let input_data = io::read_file(&config.input_file)?;
+        let input_data = io::read_file(&input_file)?;
         (input_data, None)
     };
 
     // Create cipher
     let cipher = crypto::create_cipher(
-        &config.algorithm,
-        &config.mode,
+        &algorithm,
+        &mode,
         &key,  // Use the extracted key
         iv.as_deref(),
     )?;
 
     // Perform operation
-    let output_data = match config.operation {
+    let output_data = match operation {
         Operation::Encrypt => cipher.encrypt(&input_data)?,
         Operation::Decrypt => cipher.decrypt(&input_data)?,
     };
 
     // Determine output path
-    let output_path = config.output_file
-        .unwrap_or_else(|| io::derive_output_path(&config.input_file, &config.operation));
+    let output_path = output_file
+        .unwrap_or_else(|| io::derive_output_path(&input_file, &operation));
 
     // Write output file (with IV for encryption in modes that use IV)
-    if mode_requires_iv && config.operation == Operation::Encrypt {
+    if mode_requires_iv && operation == Operation::Encrypt {
         if let Some(ref iv_ref) = iv {
             io::write_file_with_iv(&output_path, iv_ref, &output_data)?;
         } else {
@@ -104,12 +124,33 @@ fn run(config: cli::CliConfig) -> Result<()> {
     }
 
     // Print IV info for encryption
-    if mode_requires_iv && config.operation == Operation::Encrypt {
+    if mode_requires_iv && operation == Operation::Encrypt {
         if let Some(ref iv_ref) = iv {
             println!("IV (hex): {}", hex::encode(iv_ref));
             println!("Note: IV has been prepended to the output file");
         }
     }
 
+    Ok(())
+}
+
+// New hash function
+fn run_digest(
+    algorithm: String,
+    input_file: std::path::PathBuf,
+    output_file: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let hash_algorithm = hash::HashAlgorithm::from_str(&algorithm)?;
+    let hash_value = hash_algorithm.compute_file_hash(&input_file)?;
+    
+    let output_text = format!("{}  {}", hash_value, input_file.display());
+    
+    if let Some(output_path) = output_file {
+        io::write_file(&output_path, output_text.as_bytes())?;
+        println!("Hash written to: {}", output_path.display());
+    } else {
+        println!("{}", output_text);
+    }
+    
     Ok(())
 }

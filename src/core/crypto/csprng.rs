@@ -1,4 +1,4 @@
-use crate::{core::crypto::Sha256, error::{CryptoCoreError, Result}};
+use crate::{core::crypto::hash::Sha256, error::{CryptoCoreError, Result}};
 use std::f64::consts::PI;
 
 // Reduced constants for better performance

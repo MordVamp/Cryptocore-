@@ -4,56 +4,75 @@ use crate::Operation;
 
 #[derive(Debug)]
 pub struct CliConfig {
-    pub algorithm: String,
-    pub mode: String,
-    pub operation: Operation,
-    pub key: Option<Vec<u8>>,
-    pub iv: Option<Vec<u8>>,
-    pub input_file: PathBuf,
-    pub output_file: Option<PathBuf>,
+    pub operation_type: OperationType,
+}
+
+#[derive(Debug)]
+pub enum OperationType {
+    EncryptDecrypt {
+        algorithm: String,
+        mode: String,
+        operation: Operation,
+        key: Option<Vec<u8>>,
+        iv: Option<Vec<u8>>,
+        input_file: PathBuf,
+        output_file: Option<PathBuf>,
+    },
+    Digest {
+        algorithm: String,
+        input_file: PathBuf,
+        output_file: Option<PathBuf>,
+    },
 }
 
 pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
     let matches = Command::new("cryptocore")
         .version("0.1.0")
-        .about("Cryptographic tool for block cipher operations")
+        .about("Cryptographic tool for encryption and hashing operations")
         .arg(
             Arg::new("algorithm")
                 .long("algorithm")
                 .value_name("ALGORITHM")
                 .required(true)
-                .value_parser(["aes"])
-                .help("Cryptographic algorithm (currently only 'aes')"),
+                .value_parser(["aes", "sha256", "sha3-256"])
+                .help("Cryptographic algorithm (aes for encryption, sha256/sha3-256 for hashing)"),
         )
         .arg(
             Arg::new("mode")
                 .long("mode")
                 .value_name("MODE")
-                .required(true)
+                .required(false)
                 .value_parser(["ecb", "cbc", "cfb", "ofb", "ctr"])
-                .help("Mode of operation (ecb, cbc, cfb, ofb, ctr)"),
+                .help("Mode of operation (for encryption only)"),
         )
         .arg(
             Arg::new("encrypt")
                 .long("encrypt")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("decrypt")
+                .conflicts_with_all(&["decrypt", "dgst"])
                 .help("Perform encryption"),
         )
         .arg(
             Arg::new("decrypt")
                 .long("decrypt")
                 .action(ArgAction::SetTrue)
-                .conflicts_with("encrypt")
+                .conflicts_with_all(&["encrypt", "dgst"])
                 .help("Perform decryption"),
+        )
+        .arg(
+            Arg::new("dgst")
+                .long("dgst")
+                .action(ArgAction::SetTrue)
+                .conflicts_with_all(&["encrypt", "decrypt", "mode", "key", "iv"])
+                .help("Compute message digest (hash)"),
         )
         .arg(
             Arg::new("key")
                 .long("key")
                 .value_name("KEY")
-                .required(true)
+                .required(false)
                 .value_parser(parse_key)
-                .help("Encryption key as hexadecimal string (e.g., 00112233445566778899aabbccddeeff)"),
+                .help("Encryption key as hexadecimal string (optional for encryption)"),
         )
         .arg(
             Arg::new("iv")
@@ -79,38 +98,68 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
         )
         .get_matches();
 
-    let operation = if matches.get_flag("encrypt") {
-        Operation::Encrypt
-    } else if matches.get_flag("decrypt") {
-        Operation::Decrypt
-    } else {
-        return Err("Either --encrypt or --decrypt must be specified".into());
-    };
-
-    // Validate key usage
-    let key = matches.get_one::<Vec<u8>>("key").cloned();
-    if key.is_none() && operation == Operation::Decrypt {
-        return Err("Key is required for decryption".into());
-    }
-
-    let iv = matches.get_one::<Vec<u8>>("iv").cloned();
-    if let Some(ref _iv_vec) = iv {
-        if operation == Operation::Encrypt {
-            eprintln!("Warning: --iv is ignored during encryption. Using randomly generated IV.");
+    // Determine operation type
+    if matches.get_flag("dgst") {
+        // Hash operation
+        let algorithm = matches.get_one::<String>("algorithm").unwrap().to_string();
+        
+        if !["sha256", "sha3-256"].contains(&algorithm.as_str()) {
+            return Err("For hashing, algorithm must be sha256 or sha3-256".into());
         }
+
+        Ok(CliConfig {
+            operation_type: OperationType::Digest {
+                algorithm,
+                input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
+                output_file: matches.get_one::<PathBuf>("output").cloned(),
+            }
+        })
+    } else {
+        // Encryption/decryption operation
+        let operation = if matches.get_flag("encrypt") {
+            Operation::Encrypt
+        } else if matches.get_flag("decrypt") {
+            Operation::Decrypt
+        } else {
+            return Err("Either --encrypt, --decrypt, or --dgst must be specified".into());
+        };
+
+        let algorithm = matches.get_one::<String>("algorithm").unwrap().to_string();
+        
+        if algorithm != "aes" {
+            return Err("For encryption/decryption, algorithm must be 'aes'".into());
+        }
+
+        let mode = matches.get_one::<String>("mode")
+            .ok_or("Mode is required for encryption/decryption")?
+            .to_string();
+
+        // Validate key usage
+        let key = matches.get_one::<Vec<u8>>("key").cloned();
+        if key.is_none() && operation == Operation::Decrypt {
+            return Err("Key is required for decryption".into());
+        }
+
+        // Validate IV usage
+        let iv = matches.get_one::<Vec<u8>>("iv").cloned();
+        if let Some(ref _iv_vec) = iv {
+            if operation == Operation::Encrypt {
+                eprintln!("Warning: --iv is ignored during encryption. Using randomly generated IV.");
+            }
+        }
+
+        Ok(CliConfig {
+            operation_type: OperationType::EncryptDecrypt {
+                algorithm,
+                mode,
+                operation,
+                key,
+                iv,
+                input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
+                output_file: matches.get_one::<PathBuf>("output").cloned(),
+            }
+        })
     }
-
-    let config = CliConfig {
-        algorithm: matches.get_one::<String>("algorithm").unwrap().to_string(),
-        mode: matches.get_one::<String>("mode").unwrap().to_string(),
-        operation,
-        key,
-        iv,
-        input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
-        output_file: matches.get_one::<PathBuf>("output").cloned(),
-    };
-
-    Ok(config)
 }
 
 fn parse_key(s: &str) -> Result<Vec<u8>, String> {
