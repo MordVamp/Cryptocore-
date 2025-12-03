@@ -20,6 +20,24 @@ impl AesCipher {
         let cipher = Aes128::new(key_array);
         Ok(AesCipher { cipher })
     }
+
+    // Single block encryption (for CMAC)
+    pub fn encrypt_block(&self, block: &[u8; 16]) -> Result<[u8; 16]> {
+        let mut generic_block = GenericArray::clone_from_slice(block);
+        self.cipher.encrypt_block(&mut generic_block);
+        let mut result = [0u8; 16];
+        result.copy_from_slice(generic_block.as_slice());
+        Ok(result)
+    }
+
+    // Single block decryption
+    pub fn decrypt_block(&self, block: &[u8; 16]) -> Result<[u8; 16]> {
+        let mut generic_block = GenericArray::clone_from_slice(block);
+        self.cipher.decrypt_block(&mut generic_block);
+        let mut result = [0u8; 16];
+        result.copy_from_slice(generic_block.as_slice());
+        Ok(result)
+    }
 }
 
 impl Cipher for AesCipher {

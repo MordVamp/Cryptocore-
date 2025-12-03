@@ -22,6 +22,10 @@ pub enum OperationType {
         algorithm: String,
         input_file: PathBuf,
         output_file: Option<PathBuf>,
+        hmac: bool,
+        key: Option<Vec<u8>>,
+        verify: Option<PathBuf>,
+        cmac: bool,
     },
 }
 
@@ -63,23 +67,46 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
             Arg::new("dgst")
                 .long("dgst")
                 .action(ArgAction::SetTrue)
-                .conflicts_with_all(&["encrypt", "decrypt", "mode", "key", "iv"])
+                .conflicts_with_all(&["encrypt", "decrypt", "mode"])
                 .help("Compute message digest (hash)"),
+        )
+        .arg(
+            Arg::new("hmac")
+                .long("hmac")
+                .action(ArgAction::SetTrue)
+                .requires("key")
+                .conflicts_with("cmac")
+                .help("Enable HMAC mode"),
+        )
+        .arg(
+            Arg::new("cmac")
+                .long("cmac")
+                .action(ArgAction::SetTrue)
+                .requires("key")
+                .conflicts_with("hmac")
+                .help("Enable AES-CMAC mode (bonus)"),
         )
         .arg(
             Arg::new("key")
                 .long("key")
                 .value_name("KEY")
                 .required(false)
-                .value_parser(parse_key)
-                .help("Encryption key as hexadecimal string (optional for encryption)"),
+                .value_parser(parse_key_hex)
+                .help("Key as hexadecimal string (for HMAC/CMAC or encryption)"),
         )
         .arg(
             Arg::new("iv")
                 .long("iv")
                 .value_name("IV")
                 .value_parser(parse_iv)
-                .help("Initialization vector as hexadecimal string (for decryption only)"),
+                .help("Initialization vector as hexadecimal string (for encryption only)"),
+        )
+        .arg(
+            Arg::new("verify")
+                .long("verify")
+                .value_name("VERIFY_FILE")
+                .value_parser(clap::value_parser!(PathBuf))
+                .help("File containing expected HMAC for verification"),
         )
         .arg(
             Arg::new("input")
@@ -102,9 +129,24 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
     if matches.get_flag("dgst") {
         // Hash operation
         let algorithm = matches.get_one::<String>("algorithm").unwrap().to_string();
+        let hmac = matches.get_flag("hmac");
+        let cmac = matches.get_flag("cmac");
+        let key = matches.get_one::<Vec<u8>>("key").cloned();
+        let verify = matches.get_one::<PathBuf>("verify").cloned();
         
-        if !["sha256", "sha3-256"].contains(&algorithm.as_str()) {
-            return Err("For hashing, algorithm must be sha256 or sha3-256".into());
+        // Validate
+        if hmac || cmac {
+            if !["sha256"].contains(&algorithm.as_str()) {
+                return Err("For HMAC, algorithm must be sha256".into());
+            }
+            
+            if key.is_none() {
+                return Err("Key is required for HMAC/CMAC".into());
+            }
+        } else {
+            if !["sha256", "sha3-256"].contains(&algorithm.as_str()) {
+                return Err("For hashing, algorithm must be sha256 or sha3-256".into());
+            }
         }
 
         Ok(CliConfig {
@@ -112,6 +154,10 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
                 algorithm,
                 input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
                 output_file: matches.get_one::<PathBuf>("output").cloned(),
+                hmac,
+                key,
+                verify,
+                cmac,
             }
         })
     } else {
@@ -169,6 +215,12 @@ fn parse_key(s: &str) -> Result<Vec<u8>, String> {
         return Err("Key must be 16 bytes (32 hex characters)".into());
     }
 
+    hex::decode(key_str)
+        .map_err(|e| format!("Invalid hex string: {}", e))
+}
+
+fn parse_key_hex(s: &str) -> Result<Vec<u8>, String> {
+    let key_str = s.trim_start_matches('@');
     hex::decode(key_str)
         .map_err(|e| format!("Invalid hex string: {}", e))
 }

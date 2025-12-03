@@ -2,13 +2,13 @@ pub mod aes;
 pub mod csprng;
 
 pub mod hash;
+pub mod mac;
 pub mod modes;
 pub mod traits;
-use crate::core::crypto::traits::Cipher;
 use crate::error::Result;
+use crate::core::crypto::traits::Cipher;
 use modes::BlockMode;
 
-// Переименовали enum чтобы избежать конфликта имен
 pub enum CipherInstance {
     AesEcb(aes::AesCipher),
     BlockMode(BlockMode),

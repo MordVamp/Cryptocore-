@@ -22,6 +22,13 @@ assert_cmd = "2.0.0"
 predicates = "2.0.0"
 tempfile = "3.3.0"
 
+[[test]]
+name = "hmac_tests"
+path = "tests/hmac_tests.rs"
+[[test]]
+name = "integration_tests"
+path = "tests/integration_tests.rs"
+
 [[bin]]
 name = "cryptocore"
 path = "src/main.rs"

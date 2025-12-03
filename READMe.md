@@ -182,3 +182,122 @@ openssl enc -aes-128-cbc \
 7. ✅ Comprehensive testing framework
 8. ✅ Updated documentation
 
+## HMAC Support (Sprint 5)
+
+CryptoCore now supports HMAC (Hash-based Message Authentication Code) for data authentication and integrity verification.
+
+### Features
+- HMAC-SHA256 implementation following RFC 2104
+- Variable-length key support
+- File-based verification
+- Constant memory usage for large files
+
+### Usage Examples
+
+**Generate HMAC:**
+```bash
+cryptocore dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt
+# Output: a1b2c3d4e5f6012345678901234567890123456789012345678901234567890123 message.txt
+```
+
+**Verify HMAC:**
+```bash
+cryptocore dgst --algorithm sha256 --hmac --key 00112233445566778899aabbccddeeff --input message.txt --verify expected_hmac.txt
+# Output: [OK] HMAC verification successful (exit code 0)
+# or: [ERROR] HMAC verification failed (exit code 1)
+```
+
+**Manual Verification:**
+```bash
+# Generate HMAC
+cryptocore dgst --algorithm sha256 --hmac --key <key> --input file.txt > computed_hmac.txt
+
+# Compare with expected
+diff computed_hmac.txt expected_hmac.txt
+```
+
+### Key Handling
+- Keys can be any length (HMAC supports variable-length keys)
+- Keys longer than 64 bytes are hashed first using SHA-256
+- Keys shorter than 64 bytes are padded with zeros
+- Keys must be provided as hexadecimal strings
+
+### Security Properties
+HMAC provides:
+- **Message Authentication**: Verifies the message originated from the key holder
+- **Integrity**: Detects any modification to the message
+- **Key-dependent**: Different keys produce different HMACs even for the same message
+
+### Technical Details
+The implementation follows RFC 2104:
+```
+HMAC(K, m) = H((K ⊕ opad) || H((K ⊕ ipad) || m))
+```
+Where:
+- `H` is SHA-256
+- `opad` is 0x5c repeated 64 times
+- `ipad` is 0x36 repeated 64 times
+- `K` is the processed key
+- `m` is the message
+
+### Testing
+The implementation passes RFC 4231 test vectors and includes tests for:
+- Known-answer tests
+- Tamper detection (file content)
+- Tamper detection (wrong key)
+- Various key sizes
+- Empty files
+- Large files (streaming)
+
+## AES-CMAC Support (Bonus Feature)
+
+CryptoCore includes AES-CMAC (Cipher-based Message Authentication Code) as a bonus feature, following NIST SP 800-38B specification.
+
+### Features
+- AES-128 CMAC implementation
+- Correct subkey generation (K1, K2)
+- Support for messages of any length
+- File-based computation and verification
+- NIST test vector compliance
+
+### Usage Examples
+
+**Generate CMAC:**
+```bash
+cryptocore dgst --algorithm sha256 --cmac --key 2b7e151628aed2a6abf7158809cf4f3c --input message.txt
+# Output: bb1d6929e95937287fa37d129b756746 message.txt
+**Note:** The `--algorithm` parameter is required for consistency but only `sha256` is accepted when using `--hmac` or `--cmac`.
+
+### Key Requirements
+- AES-CMAC requires exactly 16-byte (128-bit) keys
+- Keys must be provided as hexadecimal strings (32 hex characters)
+
+### Technical Details
+CMAC is computed as:
+1. Generate subkeys K1 and K2 from the AES key
+2. Process message in CBC-MAC mode with IV = 0
+3. For the last block:
+   - If complete: XOR with K1 before encryption
+   - If incomplete: Pad with 0x80 and zeros, then XOR with K2 before encryption
+
+### NIST Compliance
+The implementation passes all test vectors from NIST SP 800-38B, including:
+- Empty messages
+- Messages of various lengths (0, 16, 40, 64 bytes)
+- Both aligned and unaligned block boundaries
+
+### Security Properties
+AES-CMAC provides:
+- **Message Authentication**: Based on symmetric key cryptography
+- **Integrity Protection**: Detects any modification to the message
+- **Fixed Output Size**: Always 16 bytes (128 bits)
+- **Provable Security**: Based on the security of AES
+
+### Comparison with HMAC
+| Feature | HMAC-SHA256 | AES-CMAC |
+|---------|-------------|----------|
+| Key Size | Variable (any length) | Fixed (16 bytes) |
+| Output Size | 32 bytes | 16 bytes |
+| Underlying Primitive | Hash function (SHA-256) | Block cipher (AES) |
+| Performance | Generally faster on software | Can be faster with AES hardware acceleration |
+| Standards | RFC 2104, FIPS 198-1 | NIST SP 800-38B |
