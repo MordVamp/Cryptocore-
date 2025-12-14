@@ -8,10 +8,10 @@ fn test_nist_cmac_vectors() {
     let key = hex::decode("2b7e151628aed2a6abf7158809cf4f3c").unwrap();
     
     // Test 1: M len = 0
-    //let message = b"";
-    //let expected = hex::decode("bb1d6929e95937287fa37d129b756746").unwrap();
-    //let result = Cmac::compute(&key, message).unwrap(); // Unwrap here
-    //assert_eq!(result.as_slice(), expected.as_slice(), "Test 1 (empty message) failed");
+    let message = b"";
+    let expected = hex::decode("bb1d6929e95937287fa37d129b756746").unwrap();
+    let result = Cmac::compute(&key, message).unwrap(); // Unwrap here
+    assert_eq!(result.as_slice(), expected.as_slice(), "Test 1 (empty message) failed");
     
     // Test 2: M len = 16
     let message = hex::decode("6bc1bee22e409f96e93d7e117393172a").unwrap();

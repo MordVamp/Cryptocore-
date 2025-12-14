@@ -1,3 +1,4 @@
+// cmac.rs - Fixed version
 use crate::core::crypto::aes::AesCipher;
 use crate::error::{CryptoCoreError, Result};
 
@@ -8,7 +9,6 @@ pub struct Cmac {
     k1: [u8; 16],
     k2: [u8; 16],
     buffer: Vec<u8>,
-    state: [u8; 16],
 }
 
 impl Cmac {
@@ -31,7 +31,6 @@ impl Cmac {
             k1,
             k2,
             buffer: Vec::new(),
-            state: [0u8; 16],
         })
     }
     
@@ -69,67 +68,59 @@ impl Cmac {
     }
     
     pub fn finalize(mut self) -> Result<[u8; 16]> {
-        let is_complete = self.buffer.len() % 16 == 0 && !self.buffer.is_empty();
-        let is_empty = self.buffer.is_empty();
+        let message_len = self.buffer.len();
+        let is_complete_block = message_len % BLOCK_SIZE == 0;
         
-        // Handle padding if needed
-        if !is_empty && !is_complete {
-            // Pad with 0x80 followed by zeros
-            let pad_len = 16 - (self.buffer.len() % 16);
+        // Handle padding
+        if message_len == 0 {
+            // Empty message: pad with 0x80 followed by zeros
+            let mut padded = vec![0u8; BLOCK_SIZE];
+            padded[0] = 0x80;
+            
+            // For empty message, we XOR with K2
+            let mut block = [0u8; 16];
+            for i in 0..16 {
+                block[i] = padded[i] ^ self.k2[i];
+            }
+            
+            // Encrypt the block
+            self.cipher.encrypt_block(&block)
+        } else if !is_complete_block {
+            // Incomplete block: pad with 0x80 followed by zeros
+            let pad_len = BLOCK_SIZE - (message_len % BLOCK_SIZE);
             self.buffer.push(0x80);
             self.buffer.extend(std::iter::repeat(0u8).take(pad_len - 1));
-        }
-        
-        // Split into blocks
-        let block_count = if is_empty { 1 } else { (self.buffer.len() + 15) / 16 };
-        let mut blocks = Vec::with_capacity(block_count);
-        
-        if is_empty {
-            // Empty message: single block of zeros
-            blocks.push([0u8; 16]);
-        } else {
-            for i in 0..block_count {
-                let start = i * 16;
-                let end = std::cmp::min(start + 16, self.buffer.len());
-                let mut block = [0u8; 16];
-                block[..end - start].copy_from_slice(&self.buffer[start..end]);
-                blocks.push(block);
-            }
-        }
-        
-        // Process blocks in CBC mode
-        let mut state = [0u8; 16];
-        
-        for (i, block) in blocks.iter().enumerate() {
-            let mut processed = *block;
             
-            // For the last block
-            if i == blocks.len() - 1 {
-                if is_empty {
-                    // Empty message: XOR with K2
-                    for j in 0..16 {
-                        processed[j] ^= self.k2[j];
-                    }
-                } else if is_complete {
-                    // Complete block: XOR with K1
-                    for j in 0..16 {
-                        processed[j] ^= self.k1[j];
-                    }
-                } else {
-                    // Padded block: XOR with K2
-                    for j in 0..16 {
-                        processed[j] ^= self.k2[j];
-                    }
-                }
-            }
+            // Process padded message with K2
+            self.process_cbc(&self.k2)
+        } else {
+            // Complete block(s): use K1
+            self.process_cbc(&self.k1)
+        }
+    }
+    
+    fn process_cbc(&self, subkey: &[u8; 16]) -> Result<[u8; 16]> {
+        let mut state = [0u8; 16];
+        let blocks = self.buffer.chunks_exact(BLOCK_SIZE);
+        
+        for (i, block) in blocks.enumerate() {
+            let mut block_array = [0u8; 16];
+            block_array.copy_from_slice(block);
             
             // XOR with previous state
             for j in 0..16 {
-                processed[j] ^= state[j];
+                block_array[j] ^= state[j];
             }
             
-            // Encrypt
-            state = self.cipher.encrypt_block(&processed)?;
+            // For the last block, XOR with subkey
+            if i == self.buffer.len() / BLOCK_SIZE - 1 {
+                for j in 0..16 {
+                    block_array[j] ^= subkey[j];
+                }
+            }
+            
+            // Encrypt to get next state
+            state = self.cipher.encrypt_block(&block_array)?;
         }
         
         Ok(state)
