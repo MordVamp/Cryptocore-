@@ -17,6 +17,7 @@ pub enum OperationType {
         iv: Option<Vec<u8>>,
         input_file: PathBuf,
         output_file: Option<PathBuf>,
+        aad: Option<Vec<u8>>,  // Add AAD field
     },
     Digest {
         algorithm: String,
@@ -46,7 +47,7 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
                 .long("mode")
                 .value_name("MODE")
                 .required(false)
-                .value_parser(["ecb", "cbc", "cfb", "ofb", "ctr"])
+                .value_parser(["ecb", "cbc", "cfb", "ofb", "ctr", "gcm"])  // Add "gcm"
                 .help("Mode of operation (for encryption only)"),
         )
         .arg(
@@ -100,6 +101,14 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
                 .value_name("IV")
                 .value_parser(parse_iv)
                 .help("Initialization vector as hexadecimal string (for encryption only)"),
+        )
+        .arg(
+            Arg::new("aad")  // NEW: Associated Data argument
+                .long("aad")
+                .value_name("AAD")
+                .required(false)
+                .value_parser(parse_aad)
+                .help("Associated Data as hexadecimal string (for GCM mode only)"),
         )
         .arg(
             Arg::new("verify")
@@ -180,17 +189,52 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
             .ok_or("Mode is required for encryption/decryption")?
             .to_string();
 
+        // Get AAD for GCM mode
+        let aad = matches.get_one::<Vec<u8>>("aad").cloned();
+        
+        // Validate AAD usage
+        if aad.is_some() && mode != "gcm" {
+            return Err("--aad is only supported for GCM mode".into());
+        }
+        
+        if mode == "gcm" && operation == Operation::Decrypt && aad.is_none() {
+            eprintln!("Warning: Decrypting GCM without --aad. If AAD was used during encryption, decryption will fail.");
+        }
+
         // Validate key usage
         let key = matches.get_one::<Vec<u8>>("key").cloned();
         if key.is_none() && operation == Operation::Decrypt {
             return Err("Key is required for decryption".into());
         }
 
-        // Validate IV usage
+        // Validate IV usage based on mode
         let iv = matches.get_one::<Vec<u8>>("iv").cloned();
+        
+        // GCM-specific IV (nonce) validation
+        if mode == "gcm" {
+            if let Some(ref iv_vec) = iv {
+                // For GCM, nonce should be 12 bytes (96 bits)
+                if iv_vec.len() != 12 && !iv_vec.is_empty() {
+                    return Err("For GCM mode, IV (nonce) must be 12 bytes (96 bits) or omitted for random generation".into());
+                }
+            }
+            
+            if operation == Operation::Encrypt && iv.is_some() {
+                eprintln!("Warning: Providing --iv for GCM encryption is not recommended. Using provided nonce (security risk if reused!).");
+            }
+        } else {
+            // For non-GCM modes, validate IV length
+            if let Some(ref iv_vec) = iv {
+                if iv_vec.len() != 16 {
+                    return Err("IV must be 16 bytes for non-GCM modes".into());
+                }
+            }
+        }
+
+        // Warn about IV usage in encryption for non-GCM modes
         if let Some(ref _iv_vec) = iv {
-            if operation == Operation::Encrypt {
-                eprintln!("Warning: --iv is ignored during encryption. Using randomly generated IV.");
+            if operation == Operation::Encrypt && mode != "gcm" {
+                eprintln!("Warning: --iv is ignored during encryption for non-GCM modes. Using randomly generated IV.");
             }
         }
 
@@ -203,6 +247,7 @@ pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
                 iv,
                 input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
                 output_file: matches.get_one::<PathBuf>("output").cloned(),
+                aad,  // Add AAD to the config
             }
         })
     }
@@ -228,10 +273,24 @@ fn parse_key_hex(s: &str) -> Result<Vec<u8>, String> {
 fn parse_iv(s: &str) -> Result<Vec<u8>, String> {
     let iv_str = s.trim_start_matches('@');
     
-    if iv_str.len() != 32 {
-        return Err("IV must be 16 bytes (32 hex characters)".into());
+    // Accept different lengths for different modes
+    if iv_str.len() != 24 && iv_str.len() != 32 {
+        return Err("IV must be 12 bytes (24 hex chars) for GCM or 16 bytes (32 hex chars) for other modes".into());
     }
 
     hex::decode(iv_str)
         .map_err(|e| format!("Invalid hex string: {}", e))
+}
+
+// NEW: Parse AAD (Associated Data)
+fn parse_aad(s: &str) -> Result<Vec<u8>, String> {
+    let aad_str = s.trim_start_matches('@');
+    
+    if aad_str.is_empty() {
+        // Empty AAD is valid (treated as empty byte array)
+        return Ok(Vec::new());
+    }
+    
+    hex::decode(aad_str)
+        .map_err(|e| format!("Invalid hex string for AAD: {}", e))
 }

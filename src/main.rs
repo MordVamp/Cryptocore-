@@ -1,7 +1,7 @@
+
 use cryptocore::{cli, Operation, Result, CryptoCoreError};
 use cryptocore::core::{io, crypto, crypto::hash, crypto::mac};
 use std::fs;
-
 
 fn main() -> Result<()> {
     let config = match cli::parse_args() {
@@ -20,11 +20,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// Update the main run function to pass new parameters
 fn run(config: cli::CliConfig) -> Result<()> {
     match config.operation_type {
-        cli::OperationType::EncryptDecrypt { algorithm, mode, operation, key, iv, input_file, output_file } => {
-            run_encryption(algorithm, mode, operation, key, iv, input_file, output_file)
+        cli::OperationType::EncryptDecrypt { 
+            algorithm, mode, operation, key, iv, input_file, output_file, aad 
+        } => {
+            run_encryption(algorithm, mode, operation, key, iv, input_file, output_file, aad)
         }
         cli::OperationType::Digest { algorithm, input_file, output_file, hmac, key, verify, cmac } => {
             run_digest(algorithm, input_file, output_file, hmac, key, verify, cmac)
@@ -40,8 +41,10 @@ fn run_encryption(
     iv: Option<Vec<u8>>,
     input_file: std::path::PathBuf,
     output_file: Option<std::path::PathBuf>,
+    aad: Option<Vec<u8>>,  // Add AAD parameter
 ) -> Result<()> {
-    let mode_requires_iv = !matches!(mode.to_lowercase().as_str(), "ecb");
+    let is_gcm = mode.to_lowercase() == "gcm";
+    let mode_requires_iv = !matches!(mode.to_lowercase().as_str(), "ecb") || is_gcm;
     
     // Fix: Proper key handling with pattern matching
     let (key, generated_key_hex) = match &key {
@@ -61,7 +64,17 @@ fn run_encryption(
         }
     };
 
-    // Handle IV based on operation and mode
+    // Handle AAD (default to empty if not provided)
+    let aad_bytes = aad.unwrap_or_default();
+    
+    // Special handling for GCM mode
+    if is_gcm {
+        return run_gcm_operation(
+            &key, operation, &aad_bytes, iv, input_file, output_file, generated_key_hex
+        );
+    }
+
+    // Handle IV based on operation and mode for non-GCM modes
     let (input_data, iv) = if mode_requires_iv {
         match operation {
             Operation::Encrypt => {
@@ -133,6 +146,133 @@ fn run_encryption(
         }
     }
 
+    Ok(())
+}
+
+// NEW: Special handling for GCM operations
+fn run_gcm_operation(
+    key: &[u8],
+    operation: Operation,
+    aad: &[u8],
+    iv: Option<Vec<u8>>,
+    input_file: std::path::PathBuf,
+    output_file: Option<std::path::PathBuf>,
+    generated_key_hex: Option<String>,
+) -> Result<()> {
+    use cryptocore::core::crypto::modes::gcm::Gcm;
+    
+    // Create GCM instance
+    let gcm = Gcm::new(key)?;
+    
+    // Determine output path
+    let output_path = output_file
+        .unwrap_or_else(|| io::derive_output_path(&input_file, &operation));
+    
+    match operation {
+        Operation::Encrypt => {
+            // Generate or use provided nonce
+            let nonce = if let Some(provided_nonce) = iv {
+                if provided_nonce.len() != 12 {
+                    return Err(CryptoCoreError::ConfigError(
+                        "GCM nonce must be 12 bytes".to_string()
+                    ));
+                }
+                provided_nonce
+            } else {
+                // Generate random 12-byte nonce
+                let nonce_bytes = Gcm::generate_nonce();
+                nonce_bytes.to_vec()
+            };
+            
+            println!("GCM Encryption with {} bytes of AAD", aad.len());
+            if !aad.is_empty() {
+                println!("AAD (hex): {}", hex::encode(aad));
+            }
+            println!("Nonce (hex): {}", hex::encode(&nonce));
+            
+            // Read input file
+            let plaintext = io::read_file(&input_file)?;
+            
+            // Encrypt with GCM
+            let (ciphertext, tag) = gcm.encrypt(&plaintext, aad, &nonce)?;
+            
+            // Combine nonce + ciphertext + tag for output
+            let mut output_data = Vec::with_capacity(nonce.len() + ciphertext.len() + tag.len());
+            output_data.extend_from_slice(&nonce);
+            output_data.extend_from_slice(&ciphertext);
+            output_data.extend_from_slice(&tag);
+            
+            // Write output file
+            io::write_file(&output_path, &output_data)?;
+            
+            println!("Encryption completed successfully!");
+            println!("Output: {}", output_path.display());
+            println!("Tag (hex): {}", hex::encode(&tag));
+            println!("Format: [12-byte nonce] || [ciphertext] || [16-byte tag]");
+        }
+        
+        Operation::Decrypt => {
+            println!("GCM Decryption with {} bytes of AAD", aad.len());
+            if !aad.is_empty() {
+                println!("AAD (hex): {}", hex::encode(aad));
+            }
+            
+            // Read input file
+            let encrypted_data = io::read_file(&input_file)?;
+            
+            if encrypted_data.len() < 12 + 16 {  // Need at least nonce + tag
+                return Err(CryptoCoreError::FileError(
+                    "Input file too short for GCM format".to_string()
+                ));
+            }
+            
+            // Parse: nonce (12 bytes) || ciphertext || tag (16 bytes)
+            let nonce = &encrypted_data[..12];
+            let tag_start = encrypted_data.len() - 16;
+            let tag = &encrypted_data[tag_start..];
+            let ciphertext = &encrypted_data[12..tag_start];
+            
+            // Use provided nonce (if any) instead of reading from file
+            let decryption_nonce = iv.as_deref().unwrap_or(nonce);
+            
+            println!("Nonce from file (hex): {}", hex::encode(nonce));
+            println!("Tag from file (hex): {}", hex::encode(tag));
+            
+            if let Some(provided_nonce) = &iv {
+                println!("Using provided nonce instead of file nonce");
+                println!("Provided nonce (hex): {}", hex::encode(provided_nonce));
+            }
+            
+            // Try to decrypt with catastrophic failure on authentication error
+            match gcm.decrypt(ciphertext, aad, decryption_nonce, tag) {
+                Ok(plaintext) => {
+                    // Authentication successful, write output
+                    io::write_file(&output_path, &plaintext)?;
+                    
+                    println!("[OK] Decryption completed successfully!");
+                    println!("Output: {}", output_path.display());
+                }
+                Err(e) => {
+                    // Authentication failed - catastrophic failure
+                    eprintln!("[ERROR] Authentication failed: {}", e);
+                    eprintln!("Possible causes: wrong key, wrong AAD, tampered ciphertext, or wrong nonce");
+                    
+                    // Clean up output file if it was created
+                    if output_path.exists() {
+                        let _ = std::fs::remove_file(&output_path);
+                    }
+                    
+                    return Err(e);
+                }
+            }
+        }
+    }
+    
+    // Print key info if it was generated
+    if let Some(key_hex) = generated_key_hex {
+        println!("Important: Save this key for decryption: {}", key_hex);
+    }
+    
     Ok(())
 }
 
