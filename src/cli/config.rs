@@ -17,7 +17,7 @@ pub enum OperationType {
         iv: Option<Vec<u8>>,
         input_file: PathBuf,
         output_file: Option<PathBuf>,
-        aad: Option<Vec<u8>>,  // Add AAD field
+        aad: Option<Vec<u8>>,
     },
     Digest {
         algorithm: String,
@@ -28,240 +28,340 @@ pub enum OperationType {
         verify: Option<PathBuf>,
         cmac: bool,
     },
+    Derive {
+        password: Option<Vec<u8>>,
+        password_file: Option<PathBuf>,
+        password_env: Option<String>,
+        salt: Option<Vec<u8>>,
+        iterations: u32,
+        length: usize,
+        algorithm: String,
+        output: Option<PathBuf>,
+    },
 }
 
 pub fn parse_args() -> Result<CliConfig, Box<dyn std::error::Error>> {
     let matches = Command::new("cryptocore")
         .version("0.1.0")
         .about("Cryptographic tool for encryption and hashing operations")
-        .arg(
-            Arg::new("algorithm")
-                .long("algorithm")
-                .value_name("ALGORITHM")
-                .required(true)
-                .value_parser(["aes", "sha256", "sha3-256"])
-                .help("Cryptographic algorithm (aes for encryption, sha256/sha3-256 for hashing)"),
+        .subcommand(
+            Command::new("encrypt")
+                .about("Encrypt a file")
+                .arg(Arg::new("algorithm")
+                    .long("algorithm")
+                    .value_name("ALGORITHM")
+                    .required(true)
+                    .help("Encryption algorithm (aes)"))
+                .arg(Arg::new("mode")
+                    .long("mode")
+                    .value_name("MODE")
+                    .required(true)
+                    .help("Encryption mode (ecb, cbc, cfb, ofb, ctr, gcm)"))
+                .arg(Arg::new("key")
+                    .long("key")
+                    .value_name("KEY")
+                    .value_parser(parse_key_hex)
+                    .help("Encryption key as hex string (16, 24, or 32 bytes for AES)"))
+                .arg(Arg::new("iv")
+                    .long("iv")
+                    .value_name("IV")
+                    .value_parser(parse_iv)
+                    .help("IV/nonce as hex string (16 bytes for modes except GCM, 12 bytes for GCM)"))
+                .arg(Arg::new("aad")
+                    .long("aad")
+                    .value_name("AAD")
+                    .value_parser(parse_aad)
+                    .help("Additional authenticated data for GCM mode (hex string)"))
+                .arg(Arg::new("input")
+                    .long("input")
+                    .value_name("INPUT_FILE")
+                    .required(true)
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("Input file to encrypt"))
+                .arg(Arg::new("output")
+                    .long("output")
+                    .value_name("OUTPUT_FILE")
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("Output file (default: input.enc)"))
         )
-        .arg(
-            Arg::new("mode")
-                .long("mode")
-                .value_name("MODE")
-                .required(false)
-                .value_parser(["ecb", "cbc", "cfb", "ofb", "ctr", "gcm"])  // Add "gcm"
-                .help("Mode of operation (for encryption only)"),
+        .subcommand(
+            Command::new("decrypt")
+                .about("Decrypt a file")
+                .arg(Arg::new("algorithm")
+                    .long("algorithm")
+                    .value_name("ALGORITHM")
+                    .required(true)
+                    .help("Encryption algorithm (aes)"))
+                .arg(Arg::new("mode")
+                    .long("mode")
+                    .value_name("MODE")
+                    .required(true)
+                    .help("Encryption mode (ecb, cbc, cfb, ofb, ctr, gcm)"))
+                .arg(Arg::new("key")
+                    .long("key")
+                    .value_name("KEY")
+                    .value_parser(parse_key_hex)
+                    .required(true)
+                    .help("Encryption key as hex string"))
+                .arg(Arg::new("iv")
+                    .long("iv")
+                    .value_name("IV")
+                    .value_parser(parse_iv)
+                    .help("IV/nonce as hex string (required if not in file)"))
+                .arg(Arg::new("aad")
+                    .long("aad")
+                    .value_name("AAD")
+                    .value_parser(parse_aad)
+                    .help("Additional authenticated data for GCM mode (hex string)"))
+                .arg(Arg::new("input")
+                    .long("input")
+                    .value_name("INPUT_FILE")
+                    .required(true)
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("Input file to decrypt"))
+                .arg(Arg::new("output")
+                    .long("output")
+                    .value_name("OUTPUT_FILE")
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("Output file (default: input.dec)"))
         )
-        .arg(
-            Arg::new("encrypt")
-                .long("encrypt")
-                .action(ArgAction::SetTrue)
-                .conflicts_with_all(&["decrypt", "dgst"])
-                .help("Perform encryption"),
+        .subcommand(
+            Command::new("mac")
+                .about("Message Authentication Codes")
+                .subcommand(
+                    Command::new("hmac")
+                        .about("Generate or verify HMAC")
+                        .arg(Arg::new("key")
+                            .long("key")
+                            .value_name("KEY")
+                            .value_parser(parse_key_hex)
+                            .required(true)
+                            .help("Key as hex string (any length for HMAC)"))
+                        .arg(Arg::new("algorithm")
+                            .long("algorithm")
+                            .value_name("ALGORITHM")
+                            .default_value("sha256")
+                            .help("Hash algorithm (sha256)"))
+                        .arg(Arg::new("input")
+                            .long("input")
+                            .value_name("INPUT_FILE")
+                            .required(true)
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Input file"))
+                        .arg(Arg::new("output")
+                            .long("output")
+                            .value_name("OUTPUT_FILE")
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Output file for MAC"))
+                        .arg(Arg::new("verify")
+                            .long("verify")
+                            .value_name("MAC_FILE")
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Verify against MAC file"))
+                )
+                .subcommand(
+                    Command::new("cmac")
+                        .about("Generate or verify CMAC")
+                        .arg(Arg::new("key")
+                            .long("key")
+                            .value_name("KEY")
+                            .value_parser(parse_key_hex)
+                            .required(true)
+                            .help("Key as hex string (must be 16 bytes for CMAC)"))
+                        .arg(Arg::new("input")
+                            .long("input")
+                            .value_name("INPUT_FILE")
+                            .required(true)
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Input file"))
+                        .arg(Arg::new("output")
+                            .long("output")
+                            .value_name("OUTPUT_FILE")
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Output file for MAC"))
+                        .arg(Arg::new("verify")
+                            .long("verify")
+                            .value_name("MAC_FILE")
+                            .value_parser(clap::value_parser!(PathBuf))
+                            .help("Verify against MAC file"))
+                )
         )
-        .arg(
-            Arg::new("decrypt")
-                .long("decrypt")
-                .action(ArgAction::SetTrue)
-                .conflicts_with_all(&["encrypt", "dgst"])
-                .help("Perform decryption"),
-        )
-        .arg(
-            Arg::new("dgst")
-                .long("dgst")
-                .action(ArgAction::SetTrue)
-                .conflicts_with_all(&["encrypt", "decrypt", "mode"])
-                .help("Compute message digest (hash)"),
-        )
-        .arg(
-            Arg::new("hmac")
-                .long("hmac")
-                .action(ArgAction::SetTrue)
-                .requires("key")
-                .conflicts_with("cmac")
-                .help("Enable HMAC mode"),
-        )
-        .arg(
-            Arg::new("cmac")
-                .long("cmac")
-                .action(ArgAction::SetTrue)
-                .requires("key")
-                .conflicts_with("hmac")
-                .help("Enable AES-CMAC mode (bonus)"),
-        )
-        .arg(
-            Arg::new("key")
-                .long("key")
-                .value_name("KEY")
-                .required(false)
-                .value_parser(parse_key_hex)
-                .help("Key as hexadecimal string (for HMAC/CMAC or encryption)"),
-        )
-        .arg(
-            Arg::new("iv")
-                .long("iv")
-                .value_name("IV")
-                .value_parser(parse_iv)
-                .help("Initialization vector as hexadecimal string (for encryption only)"),
-        )
-        .arg(
-            Arg::new("aad")  // NEW: Associated Data argument
-                .long("aad")
-                .value_name("AAD")
-                .required(false)
-                .value_parser(parse_aad)
-                .help("Associated Data as hexadecimal string (for GCM mode only)"),
-        )
-        .arg(
-            Arg::new("verify")
-                .long("verify")
-                .value_name("VERIFY_FILE")
-                .value_parser(clap::value_parser!(PathBuf))
-                .help("File containing expected HMAC for verification"),
-        )
-        .arg(
-            Arg::new("input")
-                .long("input")
-                .value_name("INPUT_FILE")
-                .required(true)
-                .value_parser(clap::value_parser!(PathBuf))
-                .help("Input file path"),
-        )
-        .arg(
-            Arg::new("output")
-                .long("output")
-                .value_name("OUTPUT_FILE")
-                .value_parser(clap::value_parser!(PathBuf))
-                .help("Output file path (optional)"),
+        .subcommand(
+            Command::new("derive")
+                .about("Key derivation")
+                .arg(Arg::new("password")
+                    .long("password")
+                    .value_name("PASSWORD")
+                    .help("Password string for key derivation"))
+                .arg(Arg::new("password-file")
+                    .long("password-file")
+                    .value_name("PASSWORD_FILE")
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("File containing password for key derivation"))
+                .arg(Arg::new("password-env")
+                    .long("password-env")
+                    .value_name("PASSWORD_ENV")
+                    .help("Environment variable containing password for key derivation"))
+                .arg(Arg::new("salt")
+                    .long("salt")
+                    .value_name("SALT")
+                    .value_parser(parse_key_hex)
+                    .help("Salt as hexadecimal string for key derivation"))
+                .arg(Arg::new("iterations")
+                    .long("iterations")
+                    .value_name("ITERATIONS")
+                    .value_parser(clap::value_parser!(u32))
+                    .default_value("100000")
+                    .help("Iteration count for key derivation"))
+                .arg(Arg::new("length")
+                    .long("length")
+                    .value_name("LENGTH")
+                    .value_parser(clap::value_parser!(usize))
+                    .default_value("32")
+                    .help("Derived key length in bytes"))
+                .arg(Arg::new("algorithm")
+                    .long("algorithm")
+                    .value_name("KDF_ALGORITHM")
+                    .value_parser(["pbkdf2"])
+                    .default_value("pbkdf2")
+                    .help("Key derivation algorithm"))
+                .arg(Arg::new("output")
+                    .long("output")
+                    .value_name("OUTPUT_FILE")
+                    .value_parser(clap::value_parser!(PathBuf))
+                    .help("Output file for derived key"))
         )
         .get_matches();
 
-    // Determine operation type
-    if matches.get_flag("dgst") {
-        // Hash operation
-        let algorithm = matches.get_one::<String>("algorithm").unwrap().to_string();
-        let hmac = matches.get_flag("hmac");
-        let cmac = matches.get_flag("cmac");
-        let key = matches.get_one::<Vec<u8>>("key").cloned();
-        let verify = matches.get_one::<PathBuf>("verify").cloned();
-        
-        // Validate
-        if hmac || cmac {
-            if !["sha256"].contains(&algorithm.as_str()) {
-                return Err("For HMAC, algorithm must be sha256".into());
+    match matches.subcommand() {
+        Some(("encrypt", sub_matches)) => {
+            let algorithm = sub_matches.get_one::<String>("algorithm").unwrap().to_string();
+            let mode = sub_matches.get_one::<String>("mode").unwrap().to_string();
+            
+            // Validate algorithm
+            if algorithm != "aes" {
+                return Err("For encryption, algorithm must be 'aes'".into());
             }
             
-            if key.is_none() {
-                return Err("Key is required for HMAC/CMAC".into());
-            }
-        } else {
-            if !["sha256", "sha3-256"].contains(&algorithm.as_str()) {
-                return Err("For hashing, algorithm must be sha256 or sha3-256".into());
-            }
-        }
-
-        Ok(CliConfig {
-            operation_type: OperationType::Digest {
-                algorithm,
-                input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
-                output_file: matches.get_one::<PathBuf>("output").cloned(),
-                hmac,
-                key,
-                verify,
-                cmac,
-            }
-        })
-    } else {
-        // Encryption/decryption operation
-        let operation = if matches.get_flag("encrypt") {
-            Operation::Encrypt
-        } else if matches.get_flag("decrypt") {
-            Operation::Decrypt
-        } else {
-            return Err("Either --encrypt, --decrypt, or --dgst must be specified".into());
-        };
-
-        let algorithm = matches.get_one::<String>("algorithm").unwrap().to_string();
-        
-        if algorithm != "aes" {
-            return Err("For encryption/decryption, algorithm must be 'aes'".into());
-        }
-
-        let mode = matches.get_one::<String>("mode")
-            .ok_or("Mode is required for encryption/decryption")?
-            .to_string();
-
-        // Get AAD for GCM mode
-        let aad = matches.get_one::<Vec<u8>>("aad").cloned();
-        
-        // Validate AAD usage
-        if aad.is_some() && mode != "gcm" {
-            return Err("--aad is only supported for GCM mode".into());
-        }
-        
-        if mode == "gcm" && operation == Operation::Decrypt && aad.is_none() {
-            eprintln!("Warning: Decrypting GCM without --aad. If AAD was used during encryption, decryption will fail.");
-        }
-
-        // Validate key usage
-        let key = matches.get_one::<Vec<u8>>("key").cloned();
-        if key.is_none() && operation == Operation::Decrypt {
-            return Err("Key is required for decryption".into());
-        }
-
-        // Validate IV usage based on mode
-        let iv = matches.get_one::<Vec<u8>>("iv").cloned();
-        
-        // GCM-specific IV (nonce) validation
-        if mode == "gcm" {
-            if let Some(ref iv_vec) = iv {
-                // For GCM, nonce should be 12 bytes (96 bits)
-                if iv_vec.len() != 12 && !iv_vec.is_empty() {
-                    return Err("For GCM mode, IV (nonce) must be 12 bytes (96 bits) or omitted for random generation".into());
+            let key = sub_matches.get_one::<Vec<u8>>("key").cloned();
+            let iv = sub_matches.get_one::<Vec<u8>>("iv").cloned();
+            let aad = sub_matches.get_one::<Vec<u8>>("aad").cloned();
+            
+            Ok(CliConfig {
+                operation_type: OperationType::EncryptDecrypt {
+                    algorithm,
+                    mode,
+                    operation: Operation::Encrypt,
+                    key,
+                    iv,
+                    input_file: sub_matches.get_one::<PathBuf>("input").unwrap().clone(),
+                    output_file: sub_matches.get_one::<PathBuf>("output").cloned(),
+                    aad,
                 }
+            })
+        }
+        Some(("decrypt", sub_matches)) => {
+            let algorithm = sub_matches.get_one::<String>("algorithm").unwrap().to_string();
+            let mode = sub_matches.get_one::<String>("mode").unwrap().to_string();
+            
+            if algorithm != "aes" {
+                return Err("For decryption, algorithm must be 'aes'".into());
             }
             
-            if operation == Operation::Encrypt && iv.is_some() {
-                eprintln!("Warning: Providing --iv for GCM encryption is not recommended. Using provided nonce (security risk if reused!).");
-            }
-        } else {
-            // For non-GCM modes, validate IV length
-            if let Some(ref iv_vec) = iv {
-                if iv_vec.len() != 16 {
-                    return Err("IV must be 16 bytes for non-GCM modes".into());
+            let key = sub_matches.get_one::<Vec<u8>>("key").cloned()
+                .ok_or("Key is required for decryption")?;
+            let iv = sub_matches.get_one::<Vec<u8>>("iv").cloned();
+            let aad = sub_matches.get_one::<Vec<u8>>("aad").cloned();
+            
+            Ok(CliConfig {
+                operation_type: OperationType::EncryptDecrypt {
+                    algorithm,
+                    mode,
+                    operation: Operation::Decrypt,
+                    key: Some(key),
+                    iv,
+                    input_file: sub_matches.get_one::<PathBuf>("input").unwrap().clone(),
+                    output_file: sub_matches.get_one::<PathBuf>("output").cloned(),
+                    aad,
                 }
+            })
+        }
+        Some(("mac", mac_matches)) => {
+            match mac_matches.subcommand() {
+                Some(("hmac", hmac_matches)) => {
+                    let algorithm = hmac_matches.get_one::<String>("algorithm").unwrap().to_string();
+                    let key = hmac_matches.get_one::<Vec<u8>>("key").cloned()
+                        .ok_or("Key is required for HMAC")?;
+                    let verify = hmac_matches.get_one::<PathBuf>("verify").cloned();
+                    
+                    Ok(CliConfig {
+                        operation_type: OperationType::Digest {
+                            algorithm,
+                            input_file: hmac_matches.get_one::<PathBuf>("input").unwrap().clone(),
+                            output_file: hmac_matches.get_one::<PathBuf>("output").cloned(),
+                            hmac: true,
+                            key: Some(key),
+                            verify,
+                            cmac: false,
+                        }
+                    })
+                }
+                Some(("cmac", cmac_matches)) => {
+                    let key = cmac_matches.get_one::<Vec<u8>>("key").cloned()
+                        .ok_or("Key is required for CMAC")?;
+                    
+                    // Validate key length for CMAC
+                    if key.len() != 16 {
+                        return Err("AES-CMAC requires exactly 16-byte key".into());
+                    }
+                    
+                    let verify = cmac_matches.get_one::<PathBuf>("verify").cloned();
+                    
+                    Ok(CliConfig {
+                        operation_type: OperationType::Digest {
+                            algorithm: "sha256".to_string(), // CMAC uses AES, not SHA
+                            input_file: cmac_matches.get_one::<PathBuf>("input").unwrap().clone(),
+                            output_file: cmac_matches.get_one::<PathBuf>("output").cloned(),
+                            hmac: false,
+                            key: Some(key),
+                            verify,
+                            cmac: true,
+                        }
+                    })
+                }
+                _ => Err("Must specify 'hmac' or 'cmac' subcommand".into())
             }
         }
-
-        // Warn about IV usage in encryption for non-GCM modes
-        if let Some(ref _iv_vec) = iv {
-            if operation == Operation::Encrypt && mode != "gcm" {
-                eprintln!("Warning: --iv is ignored during encryption for non-GCM modes. Using randomly generated IV.");
-            }
+        Some(("derive", derive_matches)) => {
+            // Handle password input
+            let password = if let Some(pass) = derive_matches.get_one::<String>("password") {
+                Some(pass.as_bytes().to_vec())
+            } else if let Some(file) = derive_matches.get_one::<PathBuf>("password-file") {
+                Some(std::fs::read(file).map_err(|e| format!("Failed to read password file: {}", e))?)
+            } else if let Some(env_var) = derive_matches.get_one::<String>("password-env") {
+                Some(std::env::var(env_var)
+                    .map_err(|e| format!("Failed to read environment variable {}: {}", env_var, e))?
+                    .as_bytes()
+                    .to_vec())
+            } else {
+                return Err("One of --password, --password-file, or --password-env must be specified".into());
+            };
+            
+            Ok(CliConfig {
+                operation_type: OperationType::Derive {
+                    password,
+                    password_file: derive_matches.get_one::<PathBuf>("password-file").cloned(),
+                    password_env: derive_matches.get_one::<String>("password-env").cloned(),
+                    salt: derive_matches.get_one::<Vec<u8>>("salt").cloned(),
+                    iterations: *derive_matches.get_one::<u32>("iterations").unwrap_or(&100000),
+                    length: *derive_matches.get_one::<usize>("length").unwrap_or(&32),
+                    algorithm: derive_matches.get_one::<String>("algorithm").unwrap().to_string(),
+                    output: derive_matches.get_one::<PathBuf>("output").cloned(),
+                }
+            })
         }
-
-        Ok(CliConfig {
-            operation_type: OperationType::EncryptDecrypt {
-                algorithm,
-                mode,
-                operation,
-                key,
-                iv,
-                input_file: matches.get_one::<PathBuf>("input").unwrap().clone(),
-                output_file: matches.get_one::<PathBuf>("output").cloned(),
-                aad,  // Add AAD to the config
-            }
-        })
+        _ => Err("Must specify one of: encrypt, decrypt, mac, derive".into())
     }
-}
-
-fn parse_key(s: &str) -> Result<Vec<u8>, String> {
-    let key_str = s.trim_start_matches('@');
-    
-    if key_str.len() != 32 {
-        return Err("Key must be 16 bytes (32 hex characters)".into());
-    }
-
-    hex::decode(key_str)
-        .map_err(|e| format!("Invalid hex string: {}", e))
 }
 
 fn parse_key_hex(s: &str) -> Result<Vec<u8>, String> {
@@ -272,25 +372,12 @@ fn parse_key_hex(s: &str) -> Result<Vec<u8>, String> {
 
 fn parse_iv(s: &str) -> Result<Vec<u8>, String> {
     let iv_str = s.trim_start_matches('@');
-    
-    // Accept different lengths for different modes
-    if iv_str.len() != 24 && iv_str.len() != 32 {
-        return Err("IV must be 12 bytes (24 hex chars) for GCM or 16 bytes (32 hex chars) for other modes".into());
-    }
-
     hex::decode(iv_str)
         .map_err(|e| format!("Invalid hex string: {}", e))
 }
 
-// NEW: Parse AAD (Associated Data)
 fn parse_aad(s: &str) -> Result<Vec<u8>, String> {
     let aad_str = s.trim_start_matches('@');
-    
-    if aad_str.is_empty() {
-        // Empty AAD is valid (treated as empty byte array)
-        return Ok(Vec::new());
-    }
-    
     hex::decode(aad_str)
         .map_err(|e| format!("Invalid hex string for AAD: {}", e))
 }

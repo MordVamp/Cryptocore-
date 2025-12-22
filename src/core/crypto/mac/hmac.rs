@@ -58,7 +58,7 @@ impl Hmac {
         self.inner_hash.update(data);
     }
     
-    pub fn finalize(mut self) -> [u8; 32] {
+    pub fn finalize(self) -> [u8; 32] {
         // Finalize inner hash
         let inner_result = self.inner_hash.finalize();
         

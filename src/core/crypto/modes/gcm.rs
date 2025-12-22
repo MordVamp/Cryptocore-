@@ -6,7 +6,6 @@ use getrandom;
 const BLOCK_SIZE: usize = 16;
 const TAG_SIZE: usize = 16;
 const DEFAULT_NONCE_SIZE: usize = 12;
-const GHASH_POLYNOMIAL: u128 = 0xE1000000000000000000000000000000u128; // x^128 + x^7 + x^2 + x + 1
 
 pub struct Gcm {
     cipher: AesCipher,
@@ -97,8 +96,7 @@ impl Gcm {
             let mut j0 = [0u8; BLOCK_SIZE];
             j0[..nonce.len()].copy_from_slice(nonce);
             // Pad with zeros and length in bits
-            let nonce_len_bits = (nonce.len() as u64) * 8;
-            let len_bytes = nonce_len_bits.to_be_bytes();
+            let _nonce_len_bits = (nonce.len() as u64) * 8;
             // For now, we only support 12-byte nonce
             j0
         }

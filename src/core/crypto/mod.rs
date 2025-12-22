@@ -1,10 +1,12 @@
+
 pub mod aes;
 pub mod csprng;
 pub mod hash;
 pub mod mac;
 pub mod modes;
 pub mod traits;
-pub mod aead;  // Add AEAD module
+pub mod aead;
+pub mod kdf;  // Add KDF module
 
 use crate::error::Result;
 use crate::core::crypto::traits::Cipher;
@@ -13,7 +15,7 @@ use modes::BlockMode;
 pub enum CipherInstance {
     AesEcb(aes::AesCipher),
     BlockMode(BlockMode),
-    AeadMode(Box<dyn aead::Aead>),  // Add AEAD variant
+    AeadMode(Box<dyn aead::Aead>),
 }
 
 impl CipherInstance {

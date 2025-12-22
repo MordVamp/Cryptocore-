@@ -17,12 +17,12 @@ fn test_openssl_cbc_interoperability() -> Result<(), Box<dyn std::error::Error>>
     let plaintext = "Interoperability test between CryptoCore and OpenSSL CBC mode";
     fs::write("test_interop_plain.txt", plaintext)?;
 
-    // CryptoCore encryption
+    // CryptoCore encryption - Updated
     let mut cmd = Command::cargo_bin("cryptocore")?;
     cmd.args(&[
+        "encrypt",  // Changed
         "--algorithm", "aes",
         "--mode", "cbc", 
-        "--encrypt",
         "--key", TEST_KEY,
         "--input", "test_interop_plain.txt",
         "--output", "cryptocore_cbc.bin"
@@ -87,12 +87,12 @@ fn test_openssl_to_cryptocore_cbc() -> Result<(), Box<dyn std::error::Error>> {
 
     assert!(openssl_status.success(), "OpenSSL encryption failed");
 
-    // CryptoCore decryption with explicit IV
+    // CryptoCore decryption with explicit IV - Updated
     let mut cmd = Command::cargo_bin("cryptocore")?;
     cmd.args(&[
+        "decrypt",  // Changed
         "--algorithm", "aes",
         "--mode", "cbc",
-        "--decrypt", 
         "--key", TEST_KEY,
         "--iv", TEST_IV,
         "--input", "openssl_encrypted.bin",
@@ -123,12 +123,12 @@ fn test_openssl_ctr_interoperability() -> Result<(), Box<dyn std::error::Error>>
     let plaintext = "CTR mode interoperability test";
     fs::write("test_ctr_plain.txt", plaintext)?;
 
-    // CryptoCore CTR encryption
+    // CryptoCore CTR encryption - Updated
     let mut cmd = Command::cargo_bin("cryptocore")?;
     cmd.args(&[
+        "encrypt",  // Changed
         "--algorithm", "aes",
         "--mode", "ctr", 
-        "--encrypt",
         "--key", TEST_KEY,
         "--input", "test_ctr_plain.txt",
         "--output", "cryptocore_ctr.bin"

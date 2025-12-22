@@ -1,6 +1,6 @@
 
 use cryptocore::{cli, Operation, Result, CryptoCoreError};
-use cryptocore::core::{io, crypto, crypto::hash, crypto::mac};
+use cryptocore::core::{io, crypto, crypto::hash, crypto::mac, crypto::kdf};
 use std::fs;
 
 fn main() -> Result<()> {
@@ -30,6 +30,11 @@ fn run(config: cli::CliConfig) -> Result<()> {
         cli::OperationType::Digest { algorithm, input_file, output_file, hmac, key, verify, cmac } => {
             run_digest(algorithm, input_file, output_file, hmac, key, verify, cmac)
         }
+        cli::OperationType::Derive { 
+            password, password_file, password_env, salt, iterations, length, algorithm, output 
+        } => {
+            run_derive(password, password_file, password_env, salt, iterations, length, algorithm, output)
+        }
     }
 }
 
@@ -41,7 +46,7 @@ fn run_encryption(
     iv: Option<Vec<u8>>,
     input_file: std::path::PathBuf,
     output_file: Option<std::path::PathBuf>,
-    aad: Option<Vec<u8>>,  // Add AAD parameter
+    aad: Option<Vec<u8>>,
 ) -> Result<()> {
     let is_gcm = mode.to_lowercase() == "gcm";
     let mode_requires_iv = !matches!(mode.to_lowercase().as_str(), "ecb") || is_gcm;
@@ -149,7 +154,94 @@ fn run_encryption(
     Ok(())
 }
 
-// NEW: Special handling for GCM operations
+// NEW: Key derivation function
+fn run_derive(
+    password: Option<Vec<u8>>,
+    password_file: Option<std::path::PathBuf>,
+    password_env: Option<String>,
+    salt: Option<Vec<u8>>,
+    iterations: u32,
+    length: usize,
+    algorithm: String,
+    output: Option<std::path::PathBuf>,
+) -> Result<()> {
+    // Get password bytes
+    let password_bytes = password.unwrap_or_else(|| {
+        // This should not happen as we validated in CLI parser
+        eprintln!("Error: No password provided");
+        std::process::exit(1);
+    });
+    
+    // Generate or use provided salt
+    let salt_bytes = if let Some(s) = salt {
+        s
+    } else {
+        // Generate random 16-byte salt
+        println!("Generating random 16-byte salt...");
+        crypto::kdf::Pbkdf2::generate_salt(16)?
+    };
+    
+    // Display parameters
+    println!("Key Derivation Parameters:");
+    println!("  Algorithm: {}", algorithm);
+    println!("  Iterations: {}", iterations);
+    println!("  Key Length: {} bytes ({} bits)", length, length * 8);
+    println!("  Salt Length: {} bytes", salt_bytes.len());
+    println!("  Salt (hex): {}", hex::encode(&salt_bytes));
+    
+    // Measure performance
+    let start = std::time::Instant::now();
+    
+    // Derive key using PBKDF2
+    let derived_key = if algorithm.to_lowercase() == "pbkdf2" {
+        crypto::kdf::Pbkdf2::derive_key(&password_bytes, &salt_bytes, iterations, length)?
+    } else {
+        return Err(CryptoCoreError::ConfigError(
+            format!("Unsupported KDF algorithm: {}", algorithm)
+        ));
+    };
+    
+    let duration = start.elapsed();
+    
+    // Display results
+    println!("\nDerivation completed in {:.3} seconds", duration.as_secs_f64());
+    println!("Derived Key (hex): {}", hex::encode(&derived_key));
+    println!("Output Format: KEY_HEX SALT_HEX");
+    
+    // If output file specified, write key as binary
+    if let Some(output_path) = output {
+        io::write_file(&output_path, &derived_key)?;
+        println!("Key written to: {} (binary format)", output_path.display());
+    } else {
+        // Print to stdout in required format: KEY_HEX SALT_HEX
+        println!("{} {}", hex::encode(&derived_key), hex::encode(&salt_bytes));
+    }
+    
+    // Security: Clear sensitive data from memory
+    let mut password_mut = password_bytes;
+    let mut salt_mut = salt_bytes.clone();
+    let mut key_mut = derived_key;
+    
+    crypto::kdf::utils::secure_zero_memory(&mut password_mut);
+    crypto::kdf::utils::secure_zero_memory(&mut salt_mut);
+    crypto::kdf::utils::secure_zero_memory(&mut key_mut);
+    
+    // Add security recommendations
+    println!("\nSecurity Recommendations:");
+    if iterations < 100000 {
+        println!("  ⚠️  Warning: Iteration count {} is below recommended minimum of 100,000", iterations);
+        println!("  Consider increasing iterations for better security against brute-force attacks");
+    }
+    if salt_bytes.len() < 16 {
+        println!("  ⚠️  Warning: Salt length {} bytes is below recommended 16 bytes", salt_bytes.len());
+    }
+    if length < 32 {
+        println!("  ⚠️  Warning: Key length {} bytes is below recommended 32 bytes (256 bits)", length);
+    }
+    
+    Ok(())
+}
+
 fn run_gcm_operation(
     key: &[u8],
     operation: Operation,
