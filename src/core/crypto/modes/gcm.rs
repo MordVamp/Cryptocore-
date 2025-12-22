@@ -75,7 +75,7 @@ impl Gcm {
         let computed_tag = self.compute_tag(&j0, aad, ciphertext)?;
         
         if !constant_time_equals(&computed_tag, tag) {
-            return Err(CryptoCoreError::Crypto("Authentication failed: tag mismatch".to_string()));
+            return Err(CryptoCoreError::Crypto("Authentication failed".to_string()));
         }
         
         // Decrypt ciphertext in CTR mode (same as encryption)
@@ -90,17 +90,16 @@ impl Gcm {
             // For 12-byte nonce: J0 = nonce || 0x00000001
             let mut j0 = [0u8; BLOCK_SIZE];
             j0[..DEFAULT_NONCE_SIZE].copy_from_slice(nonce);
-            j0[BLOCK_SIZE - 1] = 0x01; // Little-endian 1
+            j0[BLOCK_SIZE - 1] = 0x01; // Big-endian 1
             j0
         } else {
             // For other nonce lengths: J0 = GHASH(nonce || zeros(64) || len64(nonce))
-            // (Simplified for now - we'll focus on 12-byte nonce)
             let mut j0 = [0u8; BLOCK_SIZE];
             j0[..nonce.len()].copy_from_slice(nonce);
             // Pad with zeros and length in bits
             let nonce_len_bits = (nonce.len() as u64) * 8;
             let len_bytes = nonce_len_bits.to_be_bytes();
-            // This is simplified - full GHASH would be needed for arbitrary nonce lengths
+            // For now, we only support 12-byte nonce
             j0
         }
     }
@@ -149,7 +148,7 @@ impl Gcm {
                 block[..chunk.len()].copy_from_slice(chunk);
                 // Remainder is already zero
             }
-            state = self.ghash_multiply(&state, &block);
+            self.ghash_block(&mut state, &block);
         }
         
         // Process ciphertext
@@ -162,7 +161,7 @@ impl Gcm {
                 block[..chunk.len()].copy_from_slice(chunk);
                 // Remainder is already zero
             }
-            state = self.ghash_multiply(&state, &block);
+            self.ghash_block(&mut state, &block);
         }
         
         // Process lengths: len(AAD) || len(ciphertext) in bits
@@ -172,39 +171,53 @@ impl Gcm {
         len_block[..8].copy_from_slice(&aad_len_bits.to_be_bytes());
         len_block[8..].copy_from_slice(&ciphertext_len_bits.to_be_bytes());
         
-        state = self.ghash_multiply(&state, &len_block);
+        self.ghash_block(&mut state, &len_block);
         
         state
     }
     
-    // Galois field multiplication in GF(2^128)
+    // Process a single block in GHASH
+    fn ghash_block(&self, state: &mut [u8; BLOCK_SIZE], block: &[u8; BLOCK_SIZE]) {
+        // XOR block into state
+        for i in 0..BLOCK_SIZE {
+            state[i] ^= block[i];
+        }
+        
+        // Multiply state by H in GF(2^128)
+        *state = self.ghash_multiply(state, &self.h);
+    }
+    
+    // Galois field multiplication in GF(2^128) - FIXED VERSION
     fn ghash_multiply(&self, x: &[u8; BLOCK_SIZE], y: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
         let mut z = [0u8; BLOCK_SIZE];
         let mut v = *y;
         
-        // Convert bytes to 128-bit integers for easier manipulation
-        let mut x_int = u128::from_be_bytes(*x);
+        // Convert x to bits for processing
+        let mut x_bits = 0u128;
+        for i in 0..BLOCK_SIZE {
+            x_bits = (x_bits << 8) | x[i] as u128;
+        }
         
         for i in (0..128).rev() {
             // If bit i of x is set
-            if (x_int >> i) & 1 == 1 {
+            if (x_bits >> i) & 1 == 1 {
                 for j in 0..BLOCK_SIZE {
                     z[j] ^= v[j];
                 }
             }
             
-            // Multiply v by x (right shift)
+            // Multiply v by x (right shift with reduction)
             let lsb = v[BLOCK_SIZE - 1] & 1;
             
-            // Right shift v
+            // Right shift v by 1
             for j in (1..BLOCK_SIZE).rev() {
                 v[j] = (v[j] >> 1) | ((v[j - 1] & 1) << 7);
             }
             v[0] >>= 1;
             
-            // If LSB was 1, XOR with polynomial
+            // If LSB was 1, XOR with polynomial R
             if lsb == 1 {
-                // XOR with R (0xE1 in most significant byte)
+                // R = 0xE1 in the most significant byte (x^128 + x^7 + x^2 + x + 1)
                 v[0] ^= 0xE1; // 0xE1 = 0b11100001
             }
         }
